@@ -1,8 +1,5 @@
-# -*- coding: utf-8 -*-
 """
-Created on Mon May 29 15:20:22 2023
-
-@author: knet9
+@author: Kunmi
 """
 
 from kaggle.api.kaggle_api_extended import KaggleApi
