@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed May  3 17:50:10 2023
-
-@author: knet9
+@author: Kunmi
 """
 from kaggle.api.kaggle_api_extended import KaggleApi
 from airflow import DAG
