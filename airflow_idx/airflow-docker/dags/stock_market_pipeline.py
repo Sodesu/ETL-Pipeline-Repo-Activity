@@ -32,7 +32,7 @@ def process_dataset(**kwargs):
         try:
             df = pd.read_csv(file)
             if 'Date' in df.columns:
-                df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')  # <-- This line here
+                df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
             else:
                 print(f"File {file} does not contain a 'Date' column. Skipping...")
                 continue
@@ -68,9 +68,7 @@ def convert_to_parquet(**kwargs):
     ti = kwargs['ti']
     processed_data_fe_path = ti.xcom_pull(key='processed_data_path')
     processed_data_fe = pd.read_csv(processed_data_fe_path, parse_dates=['Date'])
-    # PyArrow Table
     table = pa.Table.from_pandas(processed_data_fe)
-    # Write the table to a Parquet file in the Linux subsystem directory
     pq.write_table(table, '/home/airflow/processed_data.parquet')
 
 def read_parquet(**kwargs):

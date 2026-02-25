@@ -18,11 +18,7 @@ def download_dataset(**kwargs):
     api = KaggleApi()
     api.authenticate()
     api.dataset_download_files('jacksoncrow/stock-market-dataset', path='/tmp', unzip=True)
-
-    # Get the list of all files in the /tmp directory
     all_files = glob.glob('/tmp/*.csv')
-
-    # Push the list of files to be accessed by the next task
     kwargs['ti'].xcom_push(key='raw_data_files', value=all_files)
 
 def process_dataset(**kwargs):
@@ -34,7 +30,7 @@ def process_dataset(**kwargs):
         try:
             df = pd.read_csv(file)
             if 'Date' in df.columns:
-                df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')  # <-- This line here
+                df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
             else:
                 print(f"File {file} does not contain a 'Date' column. Skipping...")
                 continue
@@ -44,12 +40,11 @@ def process_dataset(**kwargs):
            
         
         df['Symbol'] = symbol
-        df['Security Name'] = ''  # Add the security name here if available
+        df['Security Name'] = ''
         df = df[['Symbol', 'Security Name', 'Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']]
         
         data = data.append(df, ignore_index=True)
-        
-        # Enforce data types
+
     data = data.astype({
         'Symbol': 'str',
         'Security Name': 'str',
@@ -59,7 +54,7 @@ def process_dataset(**kwargs):
         'Low': 'float',
         'Close': 'float',
         'Adj Close': 'float',
-        'Volume': 'float'  # Change to 'int' if your volume data are always integers
+        'Volume': 'float'
     })
 
         
@@ -81,19 +76,10 @@ def FE(**kwargs):
 
 
 def convert_to_parquet(**kwargs):
-    # Get the task instance
     ti = kwargs['ti']
-
-    # Pull the input file path from XCom
     processed_data_fe_path = ti.xcom_pull(key='processed_data_fe_path')
-
-    # Read the input file
     processed_data_fe = pd.read_csv(processed_data_fe_path, parse_dates=['Date'])
-
-    # Convert the DataFrame to a PyArrow Table
-    table = pa.Table.from_pandas(processed_data_fe)
-
-    # Write the table to a Parquet file in the Linux subsystem directory
+    table = pa.Table.from_pandas(processed_data_fe
     pq.write_table(table, '/home/airflow/processed_data_fe.parquet')
 
 
