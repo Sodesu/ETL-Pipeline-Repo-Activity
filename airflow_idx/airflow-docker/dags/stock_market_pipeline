@@ -12,8 +12,8 @@ import pyarrow as pa
 from pyarrow import parquet as pq
 import glob
 
-os.environ['KAGGLE_USERNAME'] = 'ampersandai' # kaggle_username = os.environ.get('KAGGLE_USERNAME')
-os.environ['KAGGLE_KEY'] = 'f96702da2f2dff980e0d8ffa783e341f' # kaggle_key = os.environ.get('KAGGLE_KEY')
+os.environ.get['KAGGLE_USERNAME']
+os.environ.get['KAGGLE_KEY']
 
 def download_dataset(**kwargs):
     api = KaggleApi()

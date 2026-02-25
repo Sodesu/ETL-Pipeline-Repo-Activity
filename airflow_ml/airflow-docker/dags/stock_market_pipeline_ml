@@ -10,9 +10,18 @@ import pandas as pd
 import pyarrow as pa
 from pyarrow import parquet as pq
 import glob
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, LSTM, Dropout
+from tensorflow.keras.callbacks import EarlyStopping
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.externals import joblib
+from sklearn.model_selection import train_test_split
 
-os.environ['KAGGLE_USERNAME'] = 'ampersandai' # kaggle_username = os.environ.get('KAGGLE_USERNAME')
-os.environ['KAGGLE_KEY'] = 'f96702da2f2dff980e0d8ffa783e341f' # kaggle_key = os.environ.get('KAGGLE_KEY')
+
+
+
+os.environ.get['KAGGLE_USERNAME']
+os.environ.get['KAGGLE_KEY']
 
 def download_dataset(**kwargs):
     api = KaggleApi()
@@ -102,9 +111,96 @@ def read_parquet(**kwargs):
     print(df)
 
 
+# Preprocess data
+def preprocess_data(df):
+    df = df.set_index('Date')
+    scaler = MinMaxScaler()
+    df_scaled = pd.DataFrame(scaler.fit_transform(df), columns=df.columns, index=df.index)
+    return df_scaled, scaler
+
+
+def split_data(df):
+    y=df['Close_Price_Pred']
+    X=df.drop('Close_Price_Pred', axis=1)
+    
+    return X, y
+
+# Rationale for LTSM Model: I used Youtube to consider 
+# alternatives to the Random Forest model,
+# and saw a comment about NEAT (Neuroevolution of Augmenting Topologies)
+# This neural architecture was  intriguing so I attempted 
+# to implement it, however via the interaction with ChatGPT
+# I discovered that due to it's lack of time series characteristics
+# which the LSTM model possesses, for this task, 
+# the objective for this problem would have a greater chance of operational
+# success and suitability via the LSTMM,
+# which I also discovered in abundance during the brief period of 
+# of Youtube ML predictive model research I conducted for this problem
+
+# Define LSTM model
+def create_model(input_shape):
+    model = Sequential()
+    model.add(LSTM(50, return_sequences=True, input_shape=input_shape))
+    model.add(Dropout(0.2))
+    model.add(LSTM(50, return_sequences=False))
+    model.add(Dropout(0.2))
+    model.add(Dense(25))
+    model.add(Dense(1))
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    return model
+
+
+
+# Training function
+def train_model(**kwargs):
+    # Load your data
+    processed_data_fe_path = kwargs['ti'].xcom_pull(key='processed_data_fe_path')
+    processed_data_fe = pd.read_csv(processed_data_fe_path, parse_dates=['Date'])
+
+    # Preprocess data
+    processed_data_scaled, scaler = preprocess_data(processed_data_fe)
+    
+    # Save your fitted scaler for later use
+    joblib.dump(scaler, 'C:/Users/knet9/API-Services/scaler.pkl')
+
+    
+    # Split into features and target variable
+    X, y = split_data(processed_data_scaled)
+
+    # Reshape input to be 3D [samples, timesteps, features] as required for LSTM
+    X = X.values.reshape((X.shape[0], 1, X.shape[1]))
+    
+    # Split into train and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Define your model
+    model = create_model((X_train.shape[1], X_train.shape[2]))
+
+    # Define early stopping
+    es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=50)
+    
+    # Fit your model
+    model.fit(X_train, y_train, epochs=100, batch_size=32, verbose=0, validation_data=(X_test, y_test), callbacks=[es])
+    
+    # Fit yourt model
+    history = model.fit(X_train, y_train, epochs=100, batch_size=32, verbose=0, validation_data=(X_test, y_test), callbacks=[es])
+    
+    # Save your model
+    model.save('/home/airflow/model.h5')
+
+    # Save the model path to xcom
+    kwargs['ti'].xcom_push(key='model_path', value='/home/airflow/model.h5')
+
+    # Convert the history.history dict to a pandas DataFrame
+    hist_df = pd.DataFrame(history.history)
+    
+    # Save to csv
+    hist_csv_file = '/home/airflow/history.csv'
+    with open(hist_csv_file, mode='w') as f:
+        hist_df.to_csv(f)
             
 default_args = {
-    'owner':'airflow_fe',
+    'owner':'airflow_ml',
     'depends_on_past': False, 
     'email_on_failure': False,
     'email_on_retry': False, 
@@ -114,9 +210,9 @@ default_args = {
 }
 
 dag = DAG(
-    dag_id='stock_market_pipeline_fe',
+    dag_id='stock_market_pipeline_ml',
     default_args=default_args, 
-    description= 'Stock Market Pipeline FE',
+    description= 'Stock Market Pipeline ML',
     schedule_interval=timedelta(days=1),
     catchup=False,
 )
@@ -156,5 +252,12 @@ read_task = PythonOperator(
     dag=dag,
 )
 
+train_model_task = PythonOperator(
+    task_id='train_model',
+    python_callable=train_model,
+    provide_context=True,
+    dag=dag,
+)
 
-download_task >> process_task >> fe_task >> convert_task >> read_task 
+
+download_task >> process_task >> fe_task >> convert_task >> read_task >> train_model_task
