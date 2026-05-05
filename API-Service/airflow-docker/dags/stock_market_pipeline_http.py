@@ -28,43 +28,27 @@ os.environ.get['KAGGLE_KEY']
 
 def load_model_and_scaler():
     global model, scaler
-    # Load the trained model and MinMaxScaler when starting the API
+
     model = load_model('/home/airflow/model.h5')
     scaler = joblib.load('/home/airflow/scaler.pkl')     
       
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    # Parse input features from the POST request body
     data = request.get_json(force=True)
 
-    # Convert data into pandas DataFrame
     df = pd.DataFrame(data)
-    
-    # If 'Date' is in the incoming data, set it as index and sort by it
     if 'Date' in df.columns:
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.set_index('Date').sort_index()
 
-    # Apply the same preprocessing that was applied during training
     df_scaled = pd.DataFrame(scaler.transform(df), columns=df.columns, index=df.index)
-
-    # Convert data into numpy array
     input_data = np.array(df_scaled)
-
-    # Reshape input data to be 3D [samples, timesteps, features]
     input_data = input_data.reshape((input_data.shape[0], 1, input_data.shape[1]))
-
-    # Make prediction using the trained model
     predictions = model.predict(input_data)
-
-    # You might want to revert the predictions back to the original scale
     predictions = scaler.inverse_transform(predictions)
-    
-    # Convert predictions into a list and then JSON
     output = predictions.tolist()
 
-    # Return the result back
     return jsonify(output)
 
 
@@ -74,10 +58,8 @@ def download_dataset(**kwargs):
     api.authenticate()
     api.dataset_download_files('jacksoncrow/stock-market-dataset', path='/tmp', unzip=True)
 
-    # Get the list of all files in the /tmp directory
     all_files = glob.glob('/tmp/*.csv')
 
-    # Push the list of files to be accessed by the next task
     kwargs['ti'].xcom_push(key='raw_data_files', value=all_files)
 
 def process_dataset(**kwargs):
@@ -89,7 +71,7 @@ def process_dataset(**kwargs):
         try:
             df = pd.read_csv(file)
             if 'Date' in df.columns:
-                df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')  # <-- This line here
+                df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
             else:
                 print(f"File {file} does not contain a 'Date' column. Skipping...")
                 continue
@@ -99,12 +81,10 @@ def process_dataset(**kwargs):
            
         
         df['Symbol'] = symbol
-        df['Security Name'] = ''  # Add the security name here if available
+        df['Security Name'] = ''
         df = df[['Symbol', 'Security Name', 'Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']]
         
         data = data.append(df, ignore_index=True)
-        
-        # Enforce data types
     data = data.astype({
         'Symbol': 'str',
         'Security Name': 'str',
@@ -114,7 +94,7 @@ def process_dataset(**kwargs):
         'Low': 'float',
         'Close': 'float',
         'Adj Close': 'float',
-        'Volume': 'float'  # Change to 'int' if your volume data are always integers
+        'Volume': 'float'
     })
 
         
@@ -136,19 +116,10 @@ def FE(**kwargs):
 
 
 def convert_to_parquet(**kwargs):
-    # Get the task instance
     ti = kwargs['ti']
-
-    # Pull the input file path from XCom
     processed_data_fe_path = ti.xcom_pull(key='processed_data_fe_path')
-
-    # Read the input file
     processed_data_fe = pd.read_csv(processed_data_fe_path, parse_dates=['Date'])
-
-    # Convert the DataFrame to a PyArrow Table
     table = pa.Table.from_pandas(processed_data_fe)
-
-    # Write the table to a Parquet file in the Linux subsystem directory
     pq.write_table(table, '/home/airflow/processed_data_fe.parquet')
 
 
@@ -156,8 +127,6 @@ def read_parquet(**kwargs):
     df = pd.read_parquet('/home/airflow/processed_data_fe.parquet')
     print(df)
 
-
-# Preprocess data
 def preprocess_data(df):
     df = df.set_index('Date')
     scaler = MinMaxScaler()
@@ -171,11 +140,12 @@ def split_data(df):
     
     return X, y
 
+
 # Rationale for LTSM Model: I used Youtube to consider 
 # alternatives to the Random Forest model,
 # and saw a comment about NEAT (Neuroevolution of Augmenting Topologies)
 # This neural architecture was  intriguing so I attempted 
-# to implement it, however via the interaction with ChatGPT
+# to implement it, however via the interaction with an LLM 
 # I discovered that due to it's lack of time series characteristics
 # which the LSTM model possesses, for this task, 
 # the objective for this problem would have a greater chance of operational
@@ -183,7 +153,6 @@ def split_data(df):
 # which I also discovered in abundance during the brief period of 
 # of Youtube ML predictive model research I conducted for this problem
 
-# Define LSTM model
 def create_model(input_shape):
     model = Sequential()
     model.add(LSTM(50, return_sequences=True, input_shape=input_shape))
@@ -197,50 +166,27 @@ def create_model(input_shape):
 
 load_model_and_scaler()
 
-# Training function
 def train_model(**kwargs):
-    # Load your data
     processed_data_fe_path = kwargs['ti'].xcom_pull(key='processed_data_fe_path')
     processed_data_fe = pd.read_csv(processed_data_fe_path, parse_dates=['Date'])
-
-    # Preprocess data
     processed_data_scaled, scaler = preprocess_data(processed_data_fe)
-    
-    # Save your fitted scaler for later use
     joblib.dump(scaler, '/home/airflow/scaler.pkl')
 
-
-    # Split into features and target variable
     X, y = split_data(processed_data_scaled)
-
-    # Reshape input to be 3D [samples, timesteps, features] as required for LSTM
     X = X.values.reshape((X.shape[0], 1, X.shape[1]))
     
-    # Split into train and test sets
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    # Define your model
     model = create_model((X_train.shape[1], X_train.shape[2]))
 
-    # Define early stopping
     es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=50)
     
-    # Fit your model
     model.fit(X_train, y_train, epochs=100, batch_size=32, verbose=0, validation_data=(X_test, y_test), callbacks=[es])
-    
-    # Fit yourt model
     history = model.fit(X_train, y_train, epochs=100, batch_size=32, verbose=0, validation_data=(X_test, y_test), callbacks=[es])
     
-    # Save your model
     model.save('/home/airflow/model.h5')
-
-    # Save the model path to xcom
     kwargs['ti'].xcom_push(key='model_path', value='/home/airflow/model.h5')
-
-    # Convert the history.history dict to a pandas DataFrame
     hist_df = pd.DataFrame(history.history)
     
-    # Save to csv
     hist_csv_file = '/home/airflow/history.csv'
     with open(hist_csv_file, mode='w') as f:
         hist_df.to_csv(f)
